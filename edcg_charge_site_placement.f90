@@ -37,7 +37,8 @@ module atomData
         real, allocatable :: caPos(:,:,:)
         real, allocatable :: caAvgPos(:,:)
         real atomEspVar
-        real edcgNorm
+        real edcgVar
+        real edcgAvg
 
         integer nRes                               ! number of residues in psf file
         integer, allocatable :: atomResNumber(:)   ! residue numbers directly from psf file
@@ -127,14 +128,14 @@ program cg_charge_fit
         ! allocate PCA matrix for EDCG
         allocate(pcaMat(nRes,nRes))
         ! allocate boundary residue arrays.  These will be updated and minimized wrt
-        allocate(boundaryRes(nCg-1),minBoundaryRes(nCg-1,nSets))!,gen_rand_ordered_seq(nCg-1))
+        allocate(boundaryRes(nCg-1),minBoundaryRes(nCg-1,nSets))
 
         ! read the trajectory and compute the atomPos*atomPos matrix, C, for charge fitting
         call read_atom_trajectory(C)
 
         !Compute PCA matrix for EDCG procedure
-        call compute_pca_matrix(caPos,nRes,nSteps,caAvgPos,pcaMat,nCg,edcgNorm)
-        print*, "EDCG Normalization:", edcgNorm
+        call compute_pca_matrix(caPos,nRes,nSteps,caAvgPos,pcaMat,nCg,edcgVar,edcgAvg)
+        print*, "EDCG Variance:", edcgVar, "EDCG Average:", edcgAvg
 
         !allocate CG arrays
         allocate(cgPos(nCg,3,nSteps),minCgCharges(nCg,nSets),minChi2(nSets,3))
@@ -167,7 +168,8 @@ program cg_charge_fit
 
                         !compute EDCG residual
                         call edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
-                        edcgChi2=edcgChi2/edcgNorm
+                        print*, "EDCG reisdual:", edcgChi2
+                        edcgChi2=edcgChi2/edcgVar
                         print*, "EDCG reisdual:", edcgChi2
                         !compute total residual
                         totalChi2 = lambda*chargeChi2 + (1-lambda)*edcgChi2
@@ -211,7 +213,7 @@ program cg_charge_fit
 
                                         !compute EDCG residual
                                         call edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
-                                        edcgChi2=edcgChi2/edcgNorm
+                                        edcgChi2=edcgChi2/edcgVar
                                         print*, "EDCG residual:", edcgChi2
 
                                         !compute total residual
@@ -245,7 +247,7 @@ program cg_charge_fit
 
                                         !compute EDCG residual
                                         call edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
-                                        edcgChi2=edcgChi2/edcgNorm
+                                        edcgChi2=(edcgChi2-edcgAvg)**2/edcgVar
                                         print*, "EDCG residual:", edcgChi2
 
                                         !compute total residual
@@ -491,7 +493,7 @@ subroutine read_atom_trajectory(C)
         atomChargesM(:,1) = atomCharges
         ! Read atom dcd header and grab nAtoms, nSteps
         call read_dcd_header(atomDcdFile,nAtoms,nSteps,20)
-        nSteps=10 !! MM temp
+        nSteps=3 !! MM temp
         allocate(atomPos(nAtoms,3,nSteps),atomEsp(nSteps),caPos(nRes,3,nSteps),caAvgPos(nRes,3))
 
         caAvgPos = 0
@@ -904,7 +906,7 @@ endsubroutine fit_charges
 subroutine edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
         implicit none
         integer nRes
-        real pcaMat(nRes,nRes)
+        real pcaMat(nRes*3,nRes*3)
         integer nCg
         integer boundaryRes(nCg-1)
         real edcgChi2
@@ -923,13 +925,13 @@ subroutine edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
                 else 
                         stopRes = nRes
                 endif
-                do res1=startRes,stopRes
+                do res1=startRes,stopRes-1
                         do i=1,3
                                 index1 = (res1-1)*3+i
-                                do res2 = startRes,stopRes
+                                do res2 = res1,stopRes
                                         do j=1,3
                                                 index2 = (res2-1)*3+j
-                                                edcgChi2 = edcgChi2 + pcaMat(index1,index2)-2.0*pcaMat(index1,index2)+pcaMat(index2,index2)
+                                                edcgChi2 = edcgChi2 + pcaMat(index1,index1)-2.0*pcaMat(index1,index2)+pcaMat(index2,index2)
                                         enddo
                                 enddo        
                         enddo

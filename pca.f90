@@ -1,7 +1,7 @@
 
 
 
-subroutine compute_pca_matrix(coord,nAtoms,nSteps,refAvg,pcaMat,nCg,edcgNorm)
+subroutine compute_pca_matrix(coord,nAtoms,nSteps,refAvg,pcaMat,nCg,edcgVar,edcgAvg)
         implicit none
         integer nAtoms
         integer nSteps
@@ -9,16 +9,19 @@ subroutine compute_pca_matrix(coord,nAtoms,nSteps,refAvg,pcaMat,nCg,edcgNorm)
         real coord(nAtoms,3,nSteps)
         real refAvg(nAtoms,3)
         real pcaMat(nAtoms,nAtoms)
-        real edcgNorm
+        real edcgVar
+        real edcgAvg
 
+        ! Align the coordinates to their average (done iteratively)
         call align_to_avg(coord,nAtoms,nSteps,refAvg)
 
-        call compute_covar(coord,nAtoms,nSteps,refAvg,pcaMat,nCg,edcgNorm)
+        ! Compute the covariance matrix
+        call compute_covar(coord,nAtoms,nSteps,refAvg,pcaMat,nCg,edcgVar,edcgAvg)
 
 endsubroutine compute_pca_matrix
 
 
-subroutine compute_covar(coord,nAtoms,nSteps,avgCoord,pcaMat,nCg,edcgNorm)
+subroutine compute_covar(coord,nAtoms,nSteps,avgCoord,pcaMat,nCg,edcgVar,edcgAvg)
         implicit none
         integer nAtoms
         integer nSteps
@@ -38,41 +41,51 @@ subroutine compute_covar(coord,nAtoms,nSteps,avgCoord,pcaMat,nCg,edcgNorm)
         real, allocatable :: work(:)            ! work array for DSYEVD subroutine
         integer info                                     ! output integer from DSYEVD which describes if routine completed successfully
         integer lwork                                    ! size of double work array for DSYEVD to be computed below (depends on nAtoms)
-        real avgEDCGNorm
-        real avgEDCGNorm2
-        real edcgNorm
+        real edcgAvg
+        real edcgAvg2
+        real edcgVar
 
         ! zero pca matrices and summed averages
         pcaMat = 0
         tempPcaMat = 0
-        avgEDCGNorm = 0
-        avgEDCGNorm2 = 0
+        edcgAvg = 0
+        edcgAvg2 = 0
 
         !compute covariance matrix
         do step=1,nSteps
+                ! zero the summed variable
+                temp = 0
+                ! first compute the diagonal elements
+                do i=1,nAtoms
+                        do j=1,3
+                                index1 = (i-1)*3+j
+                                tempPcaMat(index1,index1) = coord(i,j,step)*coord(i,j,step)-avgCoord(i,j)*avgCoord(i,j)
+                        enddo
+                enddo
                 do i=1,nAtoms
                         do j=1,3
                                 index1 = (i-1)*3+j
                                 do k=i,nAtoms
                                         do l=1,3
                                                 index2 = (k-1)*3+l
-                                                tempPcaMat(index1,index2) = coord(i,j,step)*coord(k,l,step)-avgCoord(i,j)*avgCoord(k,l)
-                                                tempPcaMat(index2,index1) = tempPcaMat(index1,index2)
+                                                if (index2 > index1) then
+                                                        tempPcaMat(index1,index2) = coord(i,j,step)*coord(k,l,step)-avgCoord(i,j)*avgCoord(k,l)
+                                                        temp = temp + tempPcaMat(index1,index1)+tempPcaMat(index2,index2)-2*tempPcaMat(index1,index2)
+                                                endif
                                         enddo
                                 enddo
                         enddo
                 enddo
-                temp = sum(tempPcaMat)
                 print*, "Step", step, "PCA sum:", temp
-                avgEDCGNorm = avgEDCGNorm+temp 
-                avgEDCGNorm2 = avgEDCGNorm2+temp*temp
+                edcgAvg = edcgAvg+temp 
+                edcgAvg2 = edcgAvg2+temp*temp
                 pcaMat = pcaMat + tempPcaMat
         enddo
 
         ! compute the normalization constant
-        avgEDCGNorm = avgEDCGNorm / real(nSteps)
-        avgEDCGNorm2 = avgEDCGNorm2 / real(nSteps)
-        edcgNorm = avgEDCGNorm2-avgEDCGNorm*avgEDCGNorm 
+        edcgAvg = edcgAvg / real(nSteps)
+        edcgAvg2 = edcgAvg2 / real(nSteps)
+        edcgVar = edcgAvg2-edcgAvg*edcgAvg 
 
         !time average and finalize covariance
         do i=1,nAtoms
@@ -82,6 +95,7 @@ subroutine compute_covar(coord,nAtoms,nSteps,avgCoord,pcaMat,nCg,edcgNorm)
                                 do l=1,3
                                         index2 = (k-1)*3+l
                                         pcaMat(index1,index2) = pcaMat(index1,index2)/real(nSteps)!-avgCoord(i,j)*avgCoord(k,l)
+                                        pcaMat(index2,index1) = pcaMat(index1,index2)
                                 enddo
                         enddo
                 enddo
