@@ -36,7 +36,9 @@ module atomData
         real, allocatable :: atomMasses(:)
         real, allocatable :: caPos(:,:,:)
         real, allocatable :: caAvgPos(:,:)
-        real atomEspVar
+        real espVar
+        real espAvg
+        real espAvg2
         real edcgVar
         real edcgAvg
 
@@ -132,10 +134,12 @@ program cg_charge_fit
 
         ! read the trajectory and compute the atomPos*atomPos matrix, C, for charge fitting
         call read_atom_trajectory(C)
+        print*,  "ESP Average:", espAvg, "ESP Variance:", espVar
+        espAvg2 = espAvg*espAvg
 
         !Compute PCA matrix for EDCG procedure
         call compute_pca_matrix(caPos,nRes,nSteps,caAvgPos,pcaMat,nCg,edcgVar,edcgAvg)
-        print*, "EDCG Variance:", edcgVar, "EDCG Average:", edcgAvg
+        print*,  "EDCG Average:", edcgAvg, "EDCG Variance:", edcgVar
 
         !allocate CG arrays
         allocate(cgPos(nCg,3,nSteps),minCgCharges(nCg,nSets),minChi2(nSets,3))
@@ -159,18 +163,16 @@ program cg_charge_fit
                         call create_CG_traj(atomPos,atomMasses,nAtoms,resAtomStart,nRes,cgPos,nCg,nSteps,boundaryRes)
 
                         !Accumulate A and B
-                        call compute_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps)
+                        call compute_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps,C,atomCharges)
 
                         !Fit charges and compute charge residual
                         call fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCg,chargeChi2)
-                        chargeChi2 = chargeChi2/real(nSteps)/atomEspVar
-                        print*, "Charge residual:", chargeChi2
+                        chargeChi2 = chargeChi2/(espAvg2)
 
                         !compute EDCG residual
                         call edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
-                        print*, "EDCG reisdual:", edcgChi2
-                        edcgChi2=edcgChi2/edcgVar
-                        print*, "EDCG reisdual:", edcgChi2
+                        edcgChi2 = edcgChi2/edcgAvg
+
                         !compute total residual
                         totalChi2 = lambda*chargeChi2 + (1-lambda)*edcgChi2
 
@@ -181,6 +183,7 @@ program cg_charge_fit
                                 minChi2(set,1)=totalChi2
                                 minChi2(set,2)=chargeChi2
                                 minChi2(set,3)=edcgChi2
+                                write(25,'("Total residual:", f16.8, " Charge residual:", f16.8, " EDCG residual:", f16.8)') totalChi2, chargeChi2, edcgChi2
                                 accept = accept+1
                         endif
                         tempFactor = tempFactor-deltaTemp
@@ -204,17 +207,15 @@ program cg_charge_fit
                                         call create_CG_traj(atomPos,atomMasses,nAtoms,resAtomStart,nRes,cgPos,nCg,nSteps,boundaryRes)
 
                                         !Accumulate A and B
-                                        call compute_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps)
+                                        call compute_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps,C,atomCharges)
 
                                         !Fit charges
                                         call fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCg,chargeChi2)
-                                        chargeChi2 = chargeChi2/real(nSteps)/atomEspVar
-                                        print*, "Charge residual:", chargeChi2
+                                        chargeChi2 = chargeChi2/espAvg2
 
                                         !compute EDCG residual
                                         call edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
-                                        edcgChi2=edcgChi2/edcgVar
-                                        print*, "EDCG residual:", edcgChi2
+                                        edcgChi2 = edcgChi2/edcgAvg
 
                                         !compute total residual
                                         totalChi2 = lambda*chargeChi2 + (1-lambda)*edcgChi2
@@ -238,17 +239,15 @@ program cg_charge_fit
                                         call create_CG_traj(atomPos,atomMasses,nAtoms,resAtomStart,nRes,cgPos,nCg,nSteps,boundaryRes)
 
                                         !Accumulate A and B
-                                        call compute_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps)
+                                        call compute_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps,C,atomCharges)
 
                                         !Fit charges
                                         call fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCg,chargeChi2)
-                                        chargeChi2 = chargeChi2/real(nSteps)/atomEspVar
-                                        print*, "Charge residual:", chargeChi2
+                                        chargeChi2 = chargeChi2/espAvg2
 
                                         !compute EDCG residual
                                         call edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
-                                        edcgChi2=(edcgChi2-edcgAvg)**2/edcgVar
-                                        print*, "EDCG residual:", edcgChi2
+                                        edcgChi2 = edcgChi2/edcgAvg
 
                                         !compute total residual
                                         totalChi2 = lambda*chargeChi2 + (1-lambda)*edcgChi2
@@ -262,6 +261,7 @@ program cg_charge_fit
                                                 minChi2(set,3)=EdcgChi2
                                         endif
                                 endif !forward step
+                                write(25,'("Total residual:", f16.8, " Charge residual:", f16.8, " EDCG residual:", f16.8)') totalChi2, chargeChi2, edcgChi2
 
                         enddo  !boundary atoms
 
@@ -493,7 +493,6 @@ subroutine read_atom_trajectory(C)
         atomChargesM(:,1) = atomCharges
         ! Read atom dcd header and grab nAtoms, nSteps
         call read_dcd_header(atomDcdFile,nAtoms,nSteps,20)
-        nSteps=3 !! MM temp
         allocate(atomPos(nAtoms,3,nSteps),atomEsp(nSteps),caPos(nRes,3,nSteps),caAvgPos(nRes,3))
 
         caAvgPos = 0
@@ -527,7 +526,7 @@ subroutine read_atom_trajectory(C)
                 !compute atom ESP for this step
                 tempMat = matmul(transpose(atomChargesM),matmul(CStep,atomChargesM))
                 atomEsp(step) = tempMat(1,1)
-                print*, "Step:", step, "Atom ESP:", atomEsp(step)
+!                print*, "Step:", step, "Atom ESP:", atomEsp(step)
                 atomEspAvg = atomEspAvg + atomEsp(step)
                 atomEspAvg2 = atomEspAvg2 + atomEsp(step)*atomEsp(step)
                 !add to C matrix 
@@ -548,8 +547,9 @@ subroutine read_atom_trajectory(C)
         atomEspAvg = atomEspAvg/real(nSteps)
         atomEspAvg2 = atomEspAvg2/real(nSteps)
         ! compute the variance
-        atomEspVar = atomEspAvg2-atomEspAvg*atomEspAvg
-        print*, "Charge Normalization factor:", atomEspVar
+        espVar = atomEspAvg2-atomEspAvg*atomEspAvg
+        espAvg = atomEspAvg
+        print*, "ESP Average:", espAvg, "ESP Variance:", espVar
 
 endsubroutine read_atom_trajectory
 
@@ -653,7 +653,7 @@ subroutine parse_command_line(atomPsfFile,atomDcdFile,cgDcdFile,outputFile,nCg,l
                 deltaStep=1
         endif
         if (npFlag.eqv..false.) then
-                write(*,'("Using a default charge residual weight of 0.5 (equial charge and EDCG weightt).  Change with command line: -l [charge residual weight]")')
+                write(*,'("Using a default charge residual weight of 0.5 (equial charge and EDCG weight).  Change with command line: -l [charge residual weight]")')
                 lambda = 0.5
         endif
         if (npFlag.eqv..false.) then
@@ -733,17 +733,20 @@ endsubroutine read_psf_file
 
 
 !requires lapack
-subroutine compute_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps)
+subroutine compute_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps,C,atomCharges)
         use openmp
         implicit none
         integer nAtoms
         integer nCg
         integer nSteps
         real atomPos(nAtoms,3,nSteps)
+        real atomCharges(nAtoms)
         real cgPos(nCg,3,nSteps)
         real A(nCg,nCg)
         real B(nCg,nAtoms)
+        real C(nAtoms,nAtoms)
         real dist, temp
+        real cgCharges(nCg)
         !loop indeces
         integer cgSite1, cgSite2
         integer j
@@ -784,7 +787,6 @@ subroutine compute_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps)
 
 endsubroutine compute_A_B_matrices
 
-!requires lapack
 !updates A and B matrices due to change of one boundary residue
 subroutine update_A_B_matrices(atomPos,nAtoms,cgPos,nCg,A,B,nSteps,updatedBR)
         use openmp
@@ -884,20 +886,21 @@ subroutine fit_charges(A, B, C, atomCharges, cgCharges, nAtoms, nCg, rss)
 
         !Now use lapack routine to solve least squares problem A*cgCharges=B*atomCharges
         newB = matmul(dble(BTemp),dble(atomCharges))
+        ! determine optimal size of work array
         call dgels("N",nCg,nCg,1,ATemp,nCg,newB,nCg,workQuery,-1,info)
         lwork = int(workQuery(1))
         allocate(work(lwork))
+        ! perform fit
         call dgels("N",nCg,nCg,1,ATemp,nCg,newB,nCg,work,lwork,info)
         deallocate(work)
         
         cgCharges(:,1) = real(newB(1:nCg))
         atomChargesM(:,1) = atomCharges
 
+        ! compute residual sum of squares
         temp = matmul(transpose(atomChargesM),matmul(C,atomChargesM))+matmul(transpose(cgCharges),matmul(A,cgCharges))-2*matmul(transpose(cgCharges),matmul(B,atomChargesM))
         rss = temp(1,1)
 
-!        write(*,'(a17,f12.3," Total atomic charge:",f12.3)') "Total CG Charge:",sum(cgCharges),sum(atomCharges)
-!        write(*,'("Residual Sum of Squares:",f8.3,f8.3)') newB(nCg+1), rss(1,1)
 
 
 endsubroutine fit_charges
@@ -906,7 +909,7 @@ endsubroutine fit_charges
 subroutine edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
         implicit none
         integer nRes
-        real pcaMat(nRes*3,nRes*3)
+        real pcaMat(nRes,nRes)
         integer nCg
         integer boundaryRes(nCg-1)
         real edcgChi2
@@ -926,19 +929,15 @@ subroutine edcg_residual(pcaMat,nRes,boundaryRes,nCg,edcgChi2)
                         stopRes = nRes
                 endif
                 do res1=startRes,stopRes-1
-                        do i=1,3
-                                index1 = (res1-1)*3+i
-                                do res2 = res1,stopRes
-                                        do j=1,3
-                                                index2 = (res2-1)*3+j
-                                                edcgChi2 = edcgChi2 + pcaMat(index1,index1)-2.0*pcaMat(index1,index2)+pcaMat(index2,index2)
-                                        enddo
-                                enddo        
+                        do res2 = res1+1,stopRes
+                                edcgChi2 = edcgChi2 + pcaMat(res1,res2)
                         enddo
                 enddo 
 
                 startRes = stopRes+1
         enddo
+        
+        edcgChi2 = edcgChi2/real(3*nCg)
 
 endsubroutine edcg_residual
 

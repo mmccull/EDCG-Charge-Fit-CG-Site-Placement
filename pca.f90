@@ -30,8 +30,7 @@ subroutine compute_covar(coord,nAtoms,nSteps,avgCoord,pcaMat,nCg,edcgVar,edcgAvg
         real coord(nAtoms,3,nSteps)
         real avgCoord(nAtoms,3)
         real pcaMat(nAtoms,nAtoms)
-        real tempPcaMat(3*nAtoms,3*nAtoms)
-        real tempMat(3*nAtoms,1)
+        real tempPcaMat(nAtoms,nAtoms)
         real temp
         integer i, j, k, l
         integer atom1, atom2
@@ -44,6 +43,7 @@ subroutine compute_covar(coord,nAtoms,nSteps,avgCoord,pcaMat,nCg,edcgVar,edcgAvg
         real edcgAvg
         real edcgAvg2
         real edcgVar
+        real val
 
         ! zero pca matrices and summed averages
         pcaMat = 0
@@ -58,46 +58,35 @@ subroutine compute_covar(coord,nAtoms,nSteps,avgCoord,pcaMat,nCg,edcgVar,edcgAvg
                 ! first compute the diagonal elements
                 do i=1,nAtoms
                         do j=1,3
-                                index1 = (i-1)*3+j
-                                tempPcaMat(index1,index1) = coord(i,j,step)*coord(i,j,step)-avgCoord(i,j)*avgCoord(i,j)
+                                val  = (coord(i,j,step)-avgCoord(i,j))*(coord(i,j,step)-avgCoord(i,j))
+                                tempPcaMat(i,i) = tempPcaMat(i,i) + val*val
                         enddo
                 enddo
-                do i=1,nAtoms
-                        do j=1,3
-                                index1 = (i-1)*3+j
-                                do k=i,nAtoms
-                                        do l=1,3
-                                                index2 = (k-1)*3+l
-                                                if (index2 > index1) then
-                                                        tempPcaMat(index1,index2) = coord(i,j,step)*coord(k,l,step)-avgCoord(i,j)*avgCoord(k,l)
-                                                        temp = temp + tempPcaMat(index1,index1)+tempPcaMat(index2,index2)-2*tempPcaMat(index1,index2)
-                                                endif
-                                        enddo
+                do i=1,nAtoms-1
+                        do k=i+1,nAtoms
+                                do j=1,3
+                                        val = (coord(i,j,step)-avgCoord(i,j))*(coord(k,l,step)-avgCoord(k,j))
+                                        tempPcaMat(i,k) = tempPcaMat(i,k)+ val*val
                                 enddo
+                                temp = temp + tempPcaMat(i,k)
                         enddo
                 enddo
-                print*, "Step", step, "PCA sum:", temp
+                temp = temp/real(3*nCg)
+!                print*, "Step", step, "PCA sum:", temp
                 edcgAvg = edcgAvg+temp 
                 edcgAvg2 = edcgAvg2+temp*temp
                 pcaMat = pcaMat + tempPcaMat
         enddo
 
-        ! compute the normalization constant
+        ! Finalize averages and variance
         edcgAvg = edcgAvg / real(nSteps)
         edcgAvg2 = edcgAvg2 / real(nSteps)
         edcgVar = edcgAvg2-edcgAvg*edcgAvg 
 
         !time average and finalize covariance
         do i=1,nAtoms
-                do j=1,3
-                        index1 = (i-1)*3+j
-                        do k=i,nAtoms
-                                do l=1,3
-                                        index2 = (k-1)*3+l
-                                        pcaMat(index1,index2) = pcaMat(index1,index2)/real(nSteps)!-avgCoord(i,j)*avgCoord(k,l)
-                                        pcaMat(index2,index1) = pcaMat(index1,index2)
-                                enddo
-                        enddo
+                do k=i,nAtoms
+                        pcaMat(i,k) = pcaMat(i,k)/real(nSteps)
                 enddo
         enddo
 
